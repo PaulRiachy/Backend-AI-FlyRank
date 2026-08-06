@@ -1,12 +1,15 @@
 from fastapi import FastAPI, HTTPException, status
+from typing import Optional
 
 app = FastAPI()
 
-tasks_list = [
+original_tasks = [
     {"id": 1, "title": "Homework", "done": False},
     {"id": 2, "title": "Read a book", "done": True},
     {"id": 3, "title": "Brainrot", "done": True},
 ]
+
+tasks_list = [task.copy() for task in original_tasks]
 
 
 @app.get("/", summary = "Root endpoint", description = "API info")
@@ -19,10 +22,21 @@ async def health():
     return {"status" : "ok"}
 
 
-@app.get("/tasks", summary = "Get Tasks", description = "Get all available tasks")
-async def get_all_tasks():
-    return tasks_list
+@app.get("/tasks", summary = "Get Tasks", description = "Get all tasks, optionally filtered by completion status or searched by title.",)
+async def get_all_tasks(done: Optional[bool] = None, search: Optional[str] = None):
+    tasks = tasks_list
 
+    if done is not None:
+        tasks = [task for task in tasks if task["done"] == done]
+
+    if search:
+        tasks = [
+            task
+            for task in tasks
+            if search.lower() in task["title"].lower()
+        ]
+
+    return tasks
 
 @app.get("/tasks/{id}", summary = "Get task", description = "Get specific task by id")
 async def get_task(id: int):
@@ -35,7 +49,7 @@ async def get_task(id: int):
 @app.post("/tasks", status_code=status.HTTP_201_CREATED, summary = "Add task", description = "Add task to the list")
 async def add_task(task: dict):
     title = task.get("title")
-    if not title or not title.strip() or not isinstance(title, str):
+    if not isinstance(title, str) or not title.strip():
         raise HTTPException(status_code=400, detail="Title is required.")
 
     new_id = max((t["id"] for t in tasks_list), default=0) + 1
@@ -78,3 +92,26 @@ async def delete_task(id: int):
             return
 
     raise HTTPException(status_code=404, detail=f"Task {id} not found")
+
+
+@app.get("/stats", summary = "Task Statistics", description = "Get statistics about all tasks.")
+async def get_stats():
+    total = len(tasks_list)
+    done = sum(task["done"] for task in tasks_list)
+    return {
+        "total": total,
+        "done": done,
+        "open": total - done,
+    }
+
+@app.post(
+    "/reset",summary = "Reset Tasks", description = "Restore the original sample tasks.")
+async def reset_tasks():
+    global tasks_list
+
+    tasks_list = [task.copy() for task in original_tasks]
+
+    return {
+        "message": "Tasks have been reset.",
+        "tasks": tasks_list,
+    }
