@@ -9,22 +9,22 @@ tasks_list = [
 ]
 
 
-@app.get("/")
+@app.get("/", summary = "Root endpoint", description = "API info")
 async def root():
     return { "name": "Task API", "version": "1.0", "endpoints": ["/tasks"] }
 
 
-@app.get("/health")
+@app.get("/health", summary = "Health Check", description = "Check Status")
 async def health():
     return {"status" : "ok"}
 
 
-@app.get("/tasks")
+@app.get("/tasks", summary = "Get Tasks", description = "Get all available tasks")
 async def get_all_tasks():
     return tasks_list
 
 
-@app.get("/tasks/{id}")
+@app.get("/tasks/{id}", summary = "Get task", description = "Get specific task by id")
 async def get_task(id: int):
     for task in tasks_list:
         if task["id"] == id:
@@ -32,7 +32,7 @@ async def get_task(id: int):
     raise HTTPException(status_code=404, detail=f"Task {id} not found")
 
 
-@app.post("/tasks", status_code=status.HTTP_201_CREATED)
+@app.post("/tasks", status_code=status.HTTP_201_CREATED, summary = "Add task", description = "Add task to the list")
 async def add_task(task: dict):
     title = task.get("title")
     if not title or not title.strip() or not isinstance(title, str):
@@ -45,7 +45,7 @@ async def add_task(task: dict):
     tasks_list.append(new_task)
     return new_task
 
-@app.put("/tasks/{id}")
+@app.put("/tasks/{id}", summary = "Edit Task", description = "Edit a single available task in list")
 async def edit_task(id: int, task_edited: dict):
     if not task_edited:
         raise HTTPException(status_code=400, detail="Request body cannot be empty")
@@ -70,7 +70,7 @@ async def edit_task(id: int, task_edited: dict):
     raise HTTPException(status_code=404, detail=f"Task {id} not found")
 
 
-@app.delete("/tasks/{id}", status_code=status.HTTP_204_NO_CONTENT)
+@app.delete("/tasks/{id}", status_code=status.HTTP_204_NO_CONTENT, summary = "Delete task", description = "Remove task from list")
 async def delete_task(id: int):
     for index, task in enumerate(tasks_list):
         if task["id"] == id:
