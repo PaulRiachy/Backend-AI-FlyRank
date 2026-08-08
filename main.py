@@ -1,7 +1,50 @@
 from fastapi import FastAPI, HTTPException, status
 from typing import Optional
+import sqlite3
+
 
 app = FastAPI()
+
+DB_NAME = "tasks.db"
+
+def get_db():
+    return sqlite3.connect(DB_NAME)
+
+def initialize_database():
+    db = get_db()
+
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS tasks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            done BOOLEAN NOT NULL
+        )
+    """)
+
+    db.commit()
+    db.close()
+
+def seed_database():
+    db = get_db()
+
+    count = db.execute("SELECT COUNT(*) FROM tasks").fetchone()[0]
+
+    if count == 0:
+        db.executemany(
+            "INSERT INTO tasks (title, done) VALUES (?, ?)",
+            [
+                ("Homework", False),
+                ("Read a book", True),
+                ("Brainrot", True),
+            ],
+        )
+
+        db.commit()
+
+    db.close()
+
+initialize_database()
+seed_database()
 
 original_tasks = [
     {"id": 1, "title": "Homework", "done": False},
