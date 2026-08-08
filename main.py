@@ -65,28 +65,63 @@ async def health():
     return {"status" : "ok"}
 
 
-@app.get("/tasks", summary = "Get Tasks", description = "Get all tasks, optionally filtered by completion status or searched by title.",)
-async def get_all_tasks(done: Optional[bool] = None, search: Optional[str] = None):
-    tasks = tasks_list
+@app.get("/tasks", summary = "Get Tasks", description = "Get all tasks, optionally filtered by completion status or searched by title.")
+async def get_all_tasks(
+    done: Optional[bool] = None,
+    search: Optional[str] = None
+):
+    db = get_db()
+
+    query = "SELECT * FROM tasks"
+    params = []
+    conditions = []
 
     if done is not None:
-        tasks = [task for task in tasks if task["done"] == done]
+        conditions.append("done = ?")
+        params.append(done)
 
     if search:
-        tasks = [
-            task
-            for task in tasks
-            if search.lower() in task["title"].lower()
-        ]
+        conditions.append("title LIKE ?")
+        params.append(f"%{search}%")
 
-    return tasks
+    if conditions:
+        query += " WHERE " + " AND ".join(conditions)
+
+    rows = db.execute(query, params).fetchall()
+    db.close()
+
+    return [
+        {
+            "id": row[0],
+            "title": row[1],
+            "done": bool(row[2]),
+        }
+        for row in rows
+    ]
+
 
 @app.get("/tasks/{id}", summary = "Get task", description = "Get specific task by id")
 async def get_task(id: int):
-    for task in tasks_list:
-        if task["id"] == id:
-            return task
-    raise HTTPException(status_code=404, detail=f"Task {id} not found")
+    db = get_db()
+
+    row = db.execute(
+        "SELECT * FROM tasks WHERE id = ?",
+        (id,)
+    ).fetchone()
+
+    db.close()
+
+    if row is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Task {id} not found"
+        )
+
+    return {
+        "id": row[0],
+        "title": row[1],
+        "done": bool(row[2]),
+    }
 
 
 @app.post("/tasks", status_code=status.HTTP_201_CREATED, summary = "Add task", description = "Add task to the list")
