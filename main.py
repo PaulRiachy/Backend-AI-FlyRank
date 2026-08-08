@@ -2,13 +2,14 @@ from fastapi import FastAPI, HTTPException, status
 from typing import Optional
 import sqlite3
 
-
 app = FastAPI()
 
 DB_NAME = "tasks.db"
 
+
 def get_db():
     return sqlite3.connect(DB_NAME)
+
 
 def initialize_database():
     db = get_db()
@@ -17,7 +18,9 @@ def initialize_database():
         CREATE TABLE IF NOT EXISTS tasks (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             title TEXT NOT NULL,
-            done BOOLEAN NOT NULL
+            done BOOLEAN NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
         )
     """)
 
@@ -27,11 +30,17 @@ def initialize_database():
 def seed_database():
     db = get_db()
 
-    count = db.execute("SELECT COUNT(*) FROM tasks").fetchone()[0]
+    count = db.execute(
+        "SELECT COUNT(*) FROM tasks"
+    ).fetchone()[0]
 
     if count == 0:
         db.executemany(
-            "INSERT INTO tasks (title, done) VALUES (?, ?)",
+            """
+            INSERT INTO tasks
+            (title, done, created_at, updated_at)
+            VALUES (?, ?, datetime('now'), datetime('now'))
+            """,
             [
                 ("Homework", False),
                 ("Read a book", True),
@@ -43,36 +52,59 @@ def seed_database():
 
     db.close()
 
+
 initialize_database()
 seed_database()
 
-original_tasks = [
-    {"id": 1, "title": "Homework", "done": False},
-    {"id": 2, "title": "Read a book", "done": True},
-    {"id": 3, "title": "Brainrot", "done": True},
-]
 
-tasks_list = [task.copy() for task in original_tasks]
+def task_from_row(row):
+    return {
+        "id": row[0],
+        "title": row[1],
+        "done": bool(row[2]),
+        "created_at": row[3],
+        "updated_at": row[4],
+    }
 
 
-@app.get("/", summary = "Root endpoint", description = "API info")
+@app.get(
+    "/",
+    summary="Root endpoint",
+    description="API info"
+)
 async def root():
-    return { "name": "Task API", "version": "1.0", "endpoints": ["/tasks"] }
+    return {
+        "name": "Task API",
+        "version": "1.0",
+        "endpoints": ["/tasks"]
+    }
 
 
-@app.get("/health", summary = "Health Check", description = "Check Status")
+@app.get(
+    "/health",
+    summary="Health Check",
+    description="Check Status"
+)
 async def health():
-    return {"status" : "ok"}
+    return {"status": "ok"}
 
 
-@app.get("/tasks", summary = "Get Tasks", description = "Get all tasks, optionally filtered by completion status or searched by title.")
+@app.get(
+    "/tasks",
+    summary="Get Tasks",
+    description="Get all tasks, optionally filtered by completion status or searched by title."
+)
 async def get_all_tasks(
     done: Optional[bool] = None,
     search: Optional[str] = None
 ):
     db = get_db()
 
-    query = "SELECT * FROM tasks"
+    query = """
+        SELECT id, title, done, created_at, updated_at
+        FROM tasks
+    """
+
     params = []
     conditions = []
 
@@ -88,24 +120,26 @@ async def get_all_tasks(
         query += " WHERE " + " AND ".join(conditions)
 
     rows = db.execute(query, params).fetchall()
+
     db.close()
 
-    return [
-        {
-            "id": row[0],
-            "title": row[1],
-            "done": bool(row[2]),
-        }
-        for row in rows
-    ]
+    return [task_from_row(row) for row in rows]
 
 
-@app.get("/tasks/{id}", summary = "Get task", description = "Get specific task by id")
+@app.get(
+    "/tasks/{id}",
+    summary="Get task",
+    description="Get specific task by id"
+)
 async def get_task(id: int):
     db = get_db()
 
     row = db.execute(
-        "SELECT * FROM tasks WHERE id = ?",
+        """
+        SELECT id, title, done, created_at, updated_at
+        FROM tasks
+        WHERE id = ?
+        """,
         (id,)
     ).fetchone()
 
@@ -117,14 +151,15 @@ async def get_task(id: int):
             detail=f"Task {id} not found"
         )
 
-    return {
-        "id": row[0],
-        "title": row[1],
-        "done": bool(row[2]),
-    }
+    return task_from_row(row)
 
 
-@app.post("/tasks", status_code=status.HTTP_201_CREATED, summary = "Add task", description = "Add task to the list")
+@app.post(
+    "/tasks",
+    status_code=status.HTTP_201_CREATED,
+    summary="Add task",
+    description="Add task to the list"
+)
 async def add_task(task: dict):
     title = task.get("title")
 
@@ -137,7 +172,11 @@ async def add_task(task: dict):
     db = get_db()
 
     cursor = db.execute(
-        "INSERT INTO tasks (title, done) VALUES (?, ?)",
+        """
+        INSERT INTO tasks
+        (title, done, created_at, updated_at)
+        VALUES (?, ?, datetime('now'), datetime('now'))
+        """,
         (title.strip(), False)
     )
 
@@ -146,20 +185,24 @@ async def add_task(task: dict):
     db.commit()
 
     row = db.execute(
-        "SELECT * FROM tasks WHERE id = ?",
+        """
+        SELECT id, title, done, created_at, updated_at
+        FROM tasks
+        WHERE id = ?
+        """,
         (task_id,)
     ).fetchone()
 
     db.close()
 
-    return {
-        "id": row[0],
-        "title": row[1],
-        "done": bool(row[2]),
-    }
+    return task_from_row(row)
 
 
-@app.put("/tasks/{id}", summary = "Edit Task", description = "Edit a single available task in list")
+@app.put(
+    "/tasks/{id}",
+    summary="Edit Task",
+    description="Edit a single available task in list"
+)
 async def edit_task(id: int, task_edited: dict):
     if not task_edited:
         raise HTTPException(
@@ -186,12 +229,17 @@ async def edit_task(id: int, task_edited: dict):
     db = get_db()
 
     existing_task = db.execute(
-        "SELECT * FROM tasks WHERE id = ?",
+        """
+        SELECT id, title, done, created_at, updated_at
+        FROM tasks
+        WHERE id = ?
+        """,
         (id,)
     ).fetchone()
 
     if existing_task is None:
         db.close()
+
         raise HTTPException(
             status_code=404,
             detail=f"Task {id} not found"
@@ -210,37 +258,49 @@ async def edit_task(id: int, task_edited: dict):
     )
 
     db.execute(
-        "UPDATE tasks SET title = ?, done = ? WHERE id = ?",
+        """
+        UPDATE tasks
+        SET title = ?,
+            done = ?,
+            updated_at = datetime('now')
+        WHERE id = ?
+        """,
         (title, done, id)
     )
 
     db.commit()
 
     updated_task = db.execute(
-        "SELECT * FROM tasks WHERE id = ?",
+        """
+        SELECT id, title, done, created_at, updated_at
+        FROM tasks
+        WHERE id = ?
+        """,
         (id,)
     ).fetchone()
 
     db.close()
 
-    return {
-        "id": updated_task[0],
-        "title": updated_task[1],
-        "done": bool(updated_task[2]),
-    }
+    return task_from_row(updated_task)
 
 
-@app.delete("/tasks/{id}", status_code=status.HTTP_204_NO_CONTENT, summary = "Delete task", description = "Remove task from list")
+@app.delete(
+    "/tasks/{id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete task",
+    description="Remove task from list"
+)
 async def delete_task(id: int):
     db = get_db()
 
     existing_task = db.execute(
-        "SELECT * FROM tasks WHERE id = ?",
+        "SELECT id FROM tasks WHERE id = ?",
         (id,)
     ).fetchone()
 
     if existing_task is None:
         db.close()
+
         raise HTTPException(
             status_code=404,
             detail=f"Task {id} not found"
@@ -257,10 +317,24 @@ async def delete_task(id: int):
     return
 
 
-@app.get("/stats", summary = "Task Statistics", description = "Get statistics about all tasks.")
+@app.get(
+    "/stats",
+    summary="Task Statistics",
+    description="Get statistics about all tasks."
+)
 async def get_stats():
-    total = len(tasks_list)
-    done = sum(task["done"] for task in tasks_list)
+    db = get_db()
+
+    total = db.execute(
+        "SELECT COUNT(*) FROM tasks"
+    ).fetchone()[0]
+
+    done = db.execute(
+        "SELECT COUNT(*) FROM tasks WHERE done = 1"
+    ).fetchone()[0]
+
+    db.close()
+
     return {
         "total": total,
         "done": done,
@@ -269,13 +343,40 @@ async def get_stats():
 
 
 @app.post(
-    "/reset",summary = "Reset Tasks", description = "Restore the original sample tasks.")
+    "/reset",
+    summary="Reset Tasks",
+    description="Restore the original sample tasks."
+)
 async def reset_tasks():
-    global tasks_list
+    db = get_db()
 
-    tasks_list = [task.copy() for task in original_tasks]
+    db.execute("DELETE FROM tasks")
+
+    db.executemany(
+        """
+        INSERT INTO tasks
+        (title, done, created_at, updated_at)
+        VALUES (?, ?, datetime('now'), datetime('now'))
+        """,
+        [
+            ("Homework", False),
+            ("Read a book", True),
+            ("Brainrot", True),
+        ],
+    )
+
+    db.commit()
+
+    rows = db.execute(
+        """
+        SELECT id, title, done, created_at, updated_at
+        FROM tasks
+        """
+    ).fetchall()
+
+    db.close()
 
     return {
         "message": "Tasks have been reset.",
-        "tasks": tasks_list,
+        "tasks": [task_from_row(row) for row in rows],
     }

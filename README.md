@@ -1,6 +1,6 @@
 # Task Management API
 
-A lightweight RESTful API built with **Python**, **FastAPI**, and **SQLite** for managing tasks. This project demonstrates REST API fundamentals, full CRUD operations, input validation, parameterized SQL queries, database persistence, and automatically generated API documentation with Swagger UI.
+A lightweight RESTful API built with **Python**, **FastAPI**, and **SQLite** for managing tasks. This project demonstrates REST API fundamentals, full CRUD operations, input validation, parameterized SQL queries, database persistence, SQL filtering, task statistics, timestamps, and automatically generated API documentation with Swagger UI.
 
 The project originally used in-memory storage and was migrated to SQLite as part of the FlyRank Internship Backend Track Week 3 Assignment A2.
 
@@ -18,6 +18,9 @@ The project originally used in-memory storage and was migrated to SQLite as part
 * Task search by title (`?search=keyword`)
 * Task statistics endpoint
 * Reset endpoint to restore the default task list
+* Task creation and update timestamps
+* Automatic `created_at` timestamp for every task
+* Automatic `updated_at` timestamp when a task is modified
 * Strict input validation
 
   * Rejects empty request bodies
@@ -98,7 +101,7 @@ The database:
 
 * Is stored in a single file
 * Does not require a separate database server
-* Requires no database installation
+* Requires no separate SQLite installation
 * Is included with Python through the `sqlite3` module
 * Provides persistent storage
 * Makes it easy to inspect the database using DB Browser for SQLite
@@ -119,11 +122,13 @@ The `tasks` table is also created automatically if it does not exist.
 
 The application uses a single `tasks` table.
 
-| Column  | Type    | Description                                       |
-| ------- | ------- | ------------------------------------------------- |
-| `id`    | INTEGER | Primary key, automatically assigned by SQLite     |
-| `title` | TEXT    | Task title                                        |
-| `done`  | BOOLEAN | Completion status, stored by SQLite as `0` or `1` |
+| Column       | Type    | Description                                       |
+| ------------ | ------- | ------------------------------------------------- |
+| `id`         | INTEGER | Primary key, automatically assigned by SQLite     |
+| `title`      | TEXT    | Task title                                        |
+| `done`       | BOOLEAN | Completion status, stored by SQLite as `0` or `1` |
+| `created_at` | TEXT    | Date and time when the task was created           |
+| `updated_at` | TEXT    | Date and time when the task was last updated      |
 
 The database is initialized automatically when the application starts.
 
@@ -146,6 +151,35 @@ For example:
 5. The previously created task is still present.
 
 The database file acts as the persistent source of truth for the API.
+
+---
+
+# Timestamps
+
+Each task contains two timestamps:
+
+* `created_at` — records when the task was created.
+* `updated_at` — records when the task was last modified.
+
+When a task is created, both timestamps are set automatically.
+
+When a task is updated using `PUT /tasks/{id}`, the `created_at` value remains unchanged while `updated_at` is refreshed.
+
+Example:
+
+```json
+{
+    "id": 4,
+    "title": "Complete Assignment",
+    "done": false,
+    "created_at": "2026-08-08 13:20:15",
+    "updated_at": "2026-08-08 13:20:15"
+}
+```
+
+After updating the task, the `created_at` timestamp remains the same while `updated_at` changes.
+
+Adding timestamps required changing the shape of the database table and updating the SQL used for inserts, updates, and reads. It demonstrated how adding even a small piece of information requires the database schema and application code to stay synchronized, which is why structured database migrations become important as applications grow.
 
 ---
 
@@ -191,21 +225,75 @@ The `GET /tasks` endpoint supports optional query parameters.
 | `search`  | `/tasks?search=book`           | Searches task titles     |
 | Combined  | `/tasks?done=true&search=book` | Applies both filters     |
 
-Example:
+### Filter by Status
 
 ```text
 GET /tasks?done=true
 ```
 
-returns only completed tasks.
+Returns only completed tasks.
 
-Example:
+### Search by Title
 
 ```text
 GET /tasks?search=book
 ```
 
-returns tasks whose titles contain the search term.
+Returns tasks whose titles contain the search term.
+
+The search functionality uses SQL's `LIKE` operator and a parameterized query:
+
+```sql
+SELECT * FROM tasks WHERE title LIKE ?
+```
+
+The search value is supplied separately as a parameter rather than being directly inserted into the SQL statement.
+
+---
+
+# Statistics
+
+The API provides a statistics endpoint:
+
+```text
+GET /stats
+```
+
+The statistics are calculated directly using SQL queries.
+
+Example response:
+
+```json
+{
+    "total": 5,
+    "done": 2,
+    "open": 3
+}
+```
+
+The endpoint uses SQL `COUNT(*)` rather than loading every task into Python and counting them manually.
+
+---
+
+# Reset Tasks
+
+The API provides a reset endpoint:
+
+```text
+POST /reset
+```
+
+This deletes the current tasks and recreates the three default sample tasks:
+
+```text
+Homework
+Read a book
+Brainrot
+```
+
+The reset operation uses parameterized SQL for inserting the replacement tasks.
+
+The reset endpoint is useful for restoring a known starting state while testing the API.
 
 ---
 
@@ -302,31 +390,31 @@ The database can be opened directly using **DB Browser for SQLite**.
 
 Some example queries used during Stage 4 were:
 
-## Get all tasks
+## Get All Tasks
 
 ```sql
 SELECT * FROM tasks;
 ```
 
-## Get completed tasks
+## Get Completed Tasks
 
 ```sql
 SELECT * FROM tasks WHERE done = 1;
 ```
 
-## Count all tasks
+## Count All Tasks
 
 ```sql
 SELECT COUNT(*) FROM tasks;
 ```
 
-## Mark all tasks as completed
+## Mark All Tasks as Completed
 
 ```sql
 UPDATE tasks SET done = 1;
 ```
 
-## Delete completed tasks
+## Delete Completed Tasks
 
 ```sql
 DELETE FROM tasks WHERE done = 1;
@@ -363,6 +451,7 @@ This approach prevents user input from being directly concatenated into SQL stat
 Parameterized queries are used for database operations including:
 
 * Selecting tasks by ID
+* Searching tasks
 * Inserting tasks
 * Updating tasks
 * Deleting tasks
@@ -385,6 +474,8 @@ Homework
 Read a book
 Brainrot
 ```
+
+Each seeded task also receives `created_at` and `updated_at` timestamps.
 
 Restarting the application does not create duplicate copies of these tasks.
 
@@ -417,7 +508,7 @@ Then include:
 
 The `tasks.db` database can be opened using DB Browser for SQLite.
 
-The database should show the `tasks` table and its stored rows.
+The database should show the `tasks` table, its columns, and its stored rows.
 
 Add a screenshot of the database below:
 
@@ -441,7 +532,6 @@ The database screenshot demonstrates that the API data is actually persisted in 
 ```text
 .
 ├── main.py
-├── tasks.db
 ├── README.md
 ├── .gitignore
 └── images/
@@ -449,9 +539,9 @@ The database screenshot demonstrates that the API data is actually persisted in 
     └── database.png
 ```
 
-`tasks.db` is generated automatically and should normally be excluded from Git so that each clone can create its own fresh database.
+`tasks.db` is generated automatically and is excluded from Git so that each clone can create its own fresh database.
 
-SQLite journal and temporary files should also be excluded from Git.
+SQLite journal and temporary files are also excluded from Git.
 
 ---
 
@@ -508,6 +598,10 @@ This project demonstrates:
 * Database persistence
 * Parameterized queries
 * Database seeding
+* SQL filtering using `WHERE`
+* Text searching using `LIKE`
+* SQL aggregation using `COUNT(*)`
+* Database timestamps
 * SQL operations using DB Browser for SQLite
 * Interactive API documentation with Swagger UI
 * API testing using PowerShell
@@ -518,7 +612,7 @@ This project demonstrates:
 
 This project was completed as part of the FlyRank Internship Backend Track Week 3 Assignment A2.
 
-### Stage 0 — Create SQLite Database
+## Stage 0 — Create SQLite Database
 
 * Created `tasks.db`
 * Created the `tasks` table automatically
@@ -526,33 +620,33 @@ This project was completed as part of the FlyRank Internship Backend Track Week 
 * Added three seed tasks
 * Ensured seed data is only inserted when the table is empty
 
-### Stage 1 — Database Read Endpoints
+## Stage 1 — Database Read Endpoints
 
 * Updated `GET /tasks` to read from SQLite
 * Updated `GET /tasks/{id}` to query SQLite
 * Used parameterized queries
 * Preserved `404 Not Found` behavior
 
-### Stage 2 — Insert Into Database
+## Stage 2 — Insert Into Database
 
 * Updated `POST /tasks`
 * Tasks are inserted into SQLite
 * SQLite generates task IDs
 * Created tasks persist after server restarts
 
-### Stage 3 — Update and Delete
+## Stage 3 — Update and Delete
 
 * Updated `PUT /tasks/{id}` to use SQL `UPDATE`
 * Updated `DELETE /tasks/{id}` to use SQL `DELETE`
 * Preserved the original API status codes and validation behavior
 
-### Stage 4 — Explore SQLite
+## Stage 4 — Explore SQLite
 
 * Opened `tasks.db` using DB Browser for SQLite
 * Executed SQL queries manually
 * Verified that database changes are reflected through the API
 
-### Stage 5 — Publish Database Project
+## Stage 5 — Publish Database Project
 
 * Updated project documentation
 * Added SQLite setup and persistence documentation
@@ -560,8 +654,36 @@ This project was completed as part of the FlyRank Internship Backend Track Week 
 * Added SQLite files to `.gitignore`
 * Prepared the project to run from a clean clone
 
+## Additional Extras
+
+The project was extended beyond the required CRUD implementation with:
+
+* SQL-based task searching using `LIKE`
+* SQL-based task filtering using `WHERE`
+* Task statistics using `COUNT(*)`
+* Task reset functionality
+* `created_at` and `updated_at` timestamps
+
 ---
 
-## License
+# Persistence Demonstration
+
+The migration from in-memory storage to SQLite can be demonstrated using the following process:
+
+1. Start the application.
+2. Create a new task using `POST /tasks`.
+3. Confirm the task appears using `GET /tasks`.
+4. Stop the server.
+5. Start the server again.
+6. Run `GET /tasks`.
+7. Confirm the created task is still present.
+8. Open `tasks.db` using DB Browser for SQLite.
+9. Confirm the same task exists in the database.
+
+This demonstrates that the API is using persistent database storage rather than an in-memory Python list.
+
+---
+
+# License
 
 This project is intended for educational purposes and may be freely modified or extended.
