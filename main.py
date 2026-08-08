@@ -158,39 +158,103 @@ async def add_task(task: dict):
         "done": bool(row[2]),
     }
 
+
 @app.put("/tasks/{id}", summary = "Edit Task", description = "Edit a single available task in list")
 async def edit_task(id: int, task_edited: dict):
     if not task_edited:
-        raise HTTPException(status_code=400, detail="Request body cannot be empty")
+        raise HTTPException(
+            status_code=400,
+            detail="Request body cannot be empty"
+        )
 
     if "title" in task_edited:
         title = task_edited["title"]
+
         if not isinstance(title, str) or not title.strip():
-            raise HTTPException(status_code=400, detail="Title cannot be empty")
+            raise HTTPException(
+                status_code=400,
+                detail="Title cannot be empty"
+            )
 
     if "done" in task_edited:
         if not isinstance(task_edited["done"], bool):
-            raise HTTPException(status_code=400, detail="Field 'done' must be a boolean")
-        
-    for task in tasks_list:
-        if task["id"] == id:
-            if "title" in task_edited:
-                task["title"] = task_edited["title"].strip()
-            if "done" in task_edited:
-                task["done"] = task_edited["done"]
-            return task
+            raise HTTPException(
+                status_code=400,
+                detail="Field 'done' must be a boolean"
+            )
 
-    raise HTTPException(status_code=404, detail=f"Task {id} not found")
+    db = get_db()
+
+    existing_task = db.execute(
+        "SELECT * FROM tasks WHERE id = ?",
+        (id,)
+    ).fetchone()
+
+    if existing_task is None:
+        db.close()
+        raise HTTPException(
+            status_code=404,
+            detail=f"Task {id} not found"
+        )
+
+    title = (
+        task_edited["title"].strip()
+        if "title" in task_edited
+        else existing_task[1]
+    )
+
+    done = (
+        task_edited["done"]
+        if "done" in task_edited
+        else bool(existing_task[2])
+    )
+
+    db.execute(
+        "UPDATE tasks SET title = ?, done = ? WHERE id = ?",
+        (title, done, id)
+    )
+
+    db.commit()
+
+    updated_task = db.execute(
+        "SELECT * FROM tasks WHERE id = ?",
+        (id,)
+    ).fetchone()
+
+    db.close()
+
+    return {
+        "id": updated_task[0],
+        "title": updated_task[1],
+        "done": bool(updated_task[2]),
+    }
 
 
 @app.delete("/tasks/{id}", status_code=status.HTTP_204_NO_CONTENT, summary = "Delete task", description = "Remove task from list")
 async def delete_task(id: int):
-    for index, task in enumerate(tasks_list):
-        if task["id"] == id:
-            tasks_list.pop(index)
-            return
+    db = get_db()
 
-    raise HTTPException(status_code=404, detail=f"Task {id} not found")
+    existing_task = db.execute(
+        "SELECT * FROM tasks WHERE id = ?",
+        (id,)
+    ).fetchone()
+
+    if existing_task is None:
+        db.close()
+        raise HTTPException(
+            status_code=404,
+            detail=f"Task {id} not found"
+        )
+
+    db.execute(
+        "DELETE FROM tasks WHERE id = ?",
+        (id,)
+    )
+
+    db.commit()
+    db.close()
+
+    return
 
 
 @app.get("/stats", summary = "Task Statistics", description = "Get statistics about all tasks.")
@@ -202,6 +266,7 @@ async def get_stats():
         "done": done,
         "open": total - done,
     }
+
 
 @app.post(
     "/reset",summary = "Reset Tasks", description = "Restore the original sample tasks.")
