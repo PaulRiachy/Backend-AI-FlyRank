@@ -51,3 +51,9 @@ Thumbs.db
 # Environment variables / Secrets
 .env
 .env.local
+
+# SQLite database
+tasks.db
+tasks.db-journal
+tasks.db-shm
+tasks.db-wal
