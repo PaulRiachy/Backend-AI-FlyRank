@@ -127,15 +127,36 @@ async def get_task(id: int):
 @app.post("/tasks", status_code=status.HTTP_201_CREATED, summary = "Add task", description = "Add task to the list")
 async def add_task(task: dict):
     title = task.get("title")
+
     if not isinstance(title, str) or not title.strip():
-        raise HTTPException(status_code=400, detail="Title is required.")
+        raise HTTPException(
+            status_code=400,
+            detail="Title is required."
+        )
 
-    new_id = max((t["id"] for t in tasks_list), default=0) + 1
+    db = get_db()
 
-    new_task = {"id": new_id, "title": title.strip(), "done": False}
+    cursor = db.execute(
+        "INSERT INTO tasks (title, done) VALUES (?, ?)",
+        (title.strip(), False)
+    )
 
-    tasks_list.append(new_task)
-    return new_task
+    task_id = cursor.lastrowid
+
+    db.commit()
+
+    row = db.execute(
+        "SELECT * FROM tasks WHERE id = ?",
+        (task_id,)
+    ).fetchone()
+
+    db.close()
+
+    return {
+        "id": row[0],
+        "title": row[1],
+        "done": bool(row[2]),
+    }
 
 @app.put("/tasks/{id}", summary = "Edit Task", description = "Edit a single available task in list")
 async def edit_task(id: int, task_edited: dict):
