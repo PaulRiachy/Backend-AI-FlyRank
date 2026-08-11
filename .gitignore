@@ -52,7 +52,7 @@ Thumbs.db
 .env
 .env.local
 
-# SQLite database
+# SQLite database ignores
 tasks.db
 tasks.db-journal
 tasks.db-shm
