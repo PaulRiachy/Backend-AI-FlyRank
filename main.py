@@ -11,6 +11,14 @@ initialize_database()
 seed_database()
 
 
+def task_from_row(row):
+    return {
+        "id": row[0],
+        "title": row[1],
+        "done": bool(row[2]),
+    }
+
+
 @app.get(
     "/",
     summary="Root endpoint",
@@ -42,39 +50,33 @@ async def get_all_tasks(
     done: Optional[bool] = None,
     search: Optional[str] = None
 ):
-    db = get_db()
+    with get_db() as db:
+        with db.cursor() as cursor:
 
-    query = """
-        SELECT id, title, done
-        FROM tasks
-    """
+            query = """
+                SELECT id, title, done
+                FROM tasks
+            """
 
-    params = []
-    conditions = []
+            params = []
+            conditions = []
 
-    if done is not None:
-        conditions.append("done = ?")
-        params.append(done)
+            if done is not None:
+                conditions.append("done = %s")
+                params.append(done)
 
-    if search:
-        conditions.append("title LIKE ?")
-        params.append(f"%{search}%")
+            if search:
+                conditions.append("title ILIKE %s")
+                params.append(f"%{search}%")
 
-    if conditions:
-        query += " WHERE " + " AND ".join(conditions)
+            if conditions:
+                query += " WHERE " + " AND ".join(conditions)
 
-    rows = db.execute(query, params).fetchall()
+            cursor.execute(query, params)
 
-    db.close()
+            rows = cursor.fetchall()
 
-    return [
-        {
-            "id": row[0],
-            "title": row[1],
-            "done": bool(row[2]),
-        }
-        for row in rows
-    ]
+    return [task_from_row(row) for row in rows]
 
 
 @app.get(
@@ -83,18 +85,19 @@ async def get_all_tasks(
     description="Get specific task by id"
 )
 async def get_task(id: int):
-    db = get_db()
+    with get_db() as db:
+        with db.cursor() as cursor:
 
-    row = db.execute(
-        """
-        SELECT id, title, done
-        FROM tasks
-        WHERE id = ?
-        """,
-        (id,)
-    ).fetchone()
+            cursor.execute(
+                """
+                SELECT id, title, done
+                FROM tasks
+                WHERE id = %s
+                """,
+                (id,)
+            )
 
-    db.close()
+            row = cursor.fetchone()
 
     if row is None:
         raise HTTPException(
@@ -102,11 +105,7 @@ async def get_task(id: int):
             detail=f"Task {id} not found"
         )
 
-    return {
-        "id": row[0],
-        "title": row[1],
-        "done": bool(row[2]),
-    }
+    return task_from_row(row)
 
 
 @app.post(
@@ -124,37 +123,21 @@ async def add_task(task: dict):
             detail="Title is required."
         )
 
-    db = get_db()
+    with get_db() as db:
+        with db.cursor() as cursor:
 
-    cursor = db.execute(
-        """
-        INSERT INTO tasks
-        (title, done)
-        VALUES (?, ?)
-        """,
-        (title.strip(), False)
-    )
+            cursor.execute(
+                """
+                INSERT INTO tasks (title, done)
+                VALUES (%s, %s)
+                RETURNING id, title, done
+                """,
+                (title.strip(), False)
+            )
 
-    task_id = cursor.lastrowid
+            row = cursor.fetchone()
 
-    db.commit()
-
-    row = db.execute(
-        """
-        SELECT id, title, done
-        FROM tasks
-        WHERE id = ?
-        """,
-        (task_id,)
-    ).fetchone()
-
-    db.close()
-
-    return {
-        "id": row[0],
-        "title": row[1],
-        "done": bool(row[2]),
-    }
+    return task_from_row(row)
 
 
 @app.put(
@@ -163,6 +146,7 @@ async def add_task(task: dict):
     description="Edit a single available task in list"
 )
 async def edit_task(id: int, task_edited: dict):
+
     if not task_edited:
         raise HTTPException(
             status_code=400,
@@ -185,65 +169,52 @@ async def edit_task(id: int, task_edited: dict):
                 detail="Field 'done' must be a boolean"
             )
 
-    db = get_db()
+    with get_db() as db:
+        with db.cursor() as cursor:
 
-    existing_task = db.execute(
-        """
-        SELECT id, title, done
-        FROM tasks
-        WHERE id = ?
-        """,
-        (id,)
-    ).fetchone()
+            cursor.execute(
+                """
+                SELECT id, title, done
+                FROM tasks
+                WHERE id = %s
+                """,
+                (id,)
+            )
 
-    if existing_task is None:
-        db.close()
+            existing_task = cursor.fetchone()
 
-        raise HTTPException(
-            status_code=404,
-            detail=f"Task {id} not found"
-        )
+            if existing_task is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Task {id} not found"
+                )
 
-    title = (
-        task_edited["title"].strip()
-        if "title" in task_edited
-        else existing_task[1]
-    )
+            title = (
+                task_edited["title"].strip()
+                if "title" in task_edited
+                else existing_task[1]
+            )
 
-    done = (
-        task_edited["done"]
-        if "done" in task_edited
-        else bool(existing_task[2])
-    )
+            done = (
+                task_edited["done"]
+                if "done" in task_edited
+                else bool(existing_task[2])
+            )
 
-    db.execute(
-        """
-        UPDATE tasks
-        SET title = ?,
-            done = ?
-        WHERE id = ?
-        """,
-        (title, done, id)
-    )
+            cursor.execute(
+                """
+                UPDATE tasks
+                SET title = %s,
+                    done = %s
+                WHERE id = %s
+                RETURNING id, title, done
+                """,
+                (title, done, id)
+            )
 
-    db.commit()
+            updated_task = cursor.fetchone()
 
-    updated_task = db.execute(
-        """
-        SELECT id, title, done
-        FROM tasks
-        WHERE id = ?
-        """,
-        (id,)
-    ).fetchone()
-
-    db.close()
-
-    return {
-        "id": updated_task[0],
-        "title": updated_task[1],
-        "done": bool(updated_task[2]),
-    }
+    return task_from_row(updated_task)
 
 
 @app.delete(
@@ -253,28 +224,27 @@ async def edit_task(id: int, task_edited: dict):
     description="Remove task from list"
 )
 async def delete_task(id: int):
-    db = get_db()
 
-    existing_task = db.execute(
-        "SELECT id FROM tasks WHERE id = ?",
-        (id,)
-    ).fetchone()
+    with get_db() as db:
+        with db.cursor() as cursor:
 
-    if existing_task is None:
-        db.close()
+            cursor.execute(
+                "SELECT id FROM tasks WHERE id = %s",
+                (id,)
+            )
 
-        raise HTTPException(
-            status_code=404,
-            detail=f"Task {id} not found"
-        )
+            existing_task = cursor.fetchone()
 
-    db.execute(
-        "DELETE FROM tasks WHERE id = ?",
-        (id,)
-    )
+            if existing_task is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Task {id} not found"
+                )
 
-    db.commit()
-    db.close()
+            cursor.execute(
+                "DELETE FROM tasks WHERE id = %s",
+                (id,)
+            )
 
     return
 
@@ -285,17 +255,17 @@ async def delete_task(id: int):
     description="Get statistics about all tasks."
 )
 async def get_stats():
-    db = get_db()
 
-    total = db.execute(
-        "SELECT COUNT(*) FROM tasks"
-    ).fetchone()[0]
+    with get_db() as db:
+        with db.cursor() as cursor:
 
-    done = db.execute(
-        "SELECT COUNT(*) FROM tasks WHERE done = 1"
-    ).fetchone()[0]
+            cursor.execute("SELECT COUNT(*) FROM tasks")
+            total = cursor.fetchone()[0]
 
-    db.close()
+            cursor.execute(
+                "SELECT COUNT(*) FROM tasks WHERE done = TRUE"
+            )
+            done = cursor.fetchone()[0]
 
     return {
         "total": total,
@@ -310,42 +280,34 @@ async def get_stats():
     description="Restore the original sample tasks."
 )
 async def reset_tasks():
-    db = get_db()
 
-    db.execute("DELETE FROM tasks")
+    with get_db() as db:
+        with db.cursor() as cursor:
 
-    db.executemany(
-        """
-        INSERT INTO tasks
-        (title, done)
-        VALUES (?, ?)
-        """,
-        [
-            ("Homework", False),
-            ("Read a book", True),
-            ("Brainrot", True),
-        ],
-    )
+            cursor.execute("DELETE FROM tasks")
 
-    db.commit()
+            cursor.executemany(
+                """
+                INSERT INTO tasks (title, done)
+                VALUES (%s, %s)
+                """,
+                [
+                    ("Homework", False),
+                    ("Read a book", True),
+                    ("Brainrot", True),
+                ],
+            )
 
-    rows = db.execute(
-        """
-        SELECT id, title, done
-        FROM tasks
-        """
-    ).fetchall()
+            cursor.execute(
+                """
+                SELECT id, title, done
+                FROM tasks
+                """
+            )
 
-    db.close()
+            rows = cursor.fetchall()
 
     return {
         "message": "Tasks have been reset.",
-        "tasks": [
-            {
-                "id": row[0],
-                "title": row[1],
-                "done": bool(row[2]),
-            }
-            for row in rows
-        ],
+        "tasks": [task_from_row(row) for row in rows],
     }
