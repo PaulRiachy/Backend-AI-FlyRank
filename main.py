@@ -6,7 +6,6 @@ from database import get_db, initialize_database, seed_database
 
 app = FastAPI()
 
-
 initialize_database()
 seed_database()
 
