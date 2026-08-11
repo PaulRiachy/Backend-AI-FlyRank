@@ -1,70 +1,14 @@
 from fastapi import FastAPI, HTTPException, status
 from typing import Optional
-import sqlite3
+
+from database import get_db, initialize_database, seed_database
+
 
 app = FastAPI()
-
-DB_NAME = "tasks.db"
-
-
-def get_db():
-    return sqlite3.connect(DB_NAME)
-
-
-def initialize_database():
-    db = get_db()
-
-    db.execute("""
-        CREATE TABLE IF NOT EXISTS tasks (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            title TEXT NOT NULL,
-            done BOOLEAN NOT NULL,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )
-    """)
-
-    db.commit()
-    db.close()
-
-def seed_database():
-    db = get_db()
-
-    count = db.execute(
-        "SELECT COUNT(*) FROM tasks"
-    ).fetchone()[0]
-
-    if count == 0:
-        db.executemany(
-            """
-            INSERT INTO tasks
-            (title, done, created_at, updated_at)
-            VALUES (?, ?, datetime('now'), datetime('now'))
-            """,
-            [
-                ("Homework", False),
-                ("Read a book", True),
-                ("Brainrot", True),
-            ],
-        )
-
-        db.commit()
-
-    db.close()
 
 
 initialize_database()
 seed_database()
-
-
-def task_from_row(row):
-    return {
-        "id": row[0],
-        "title": row[1],
-        "done": bool(row[2]),
-        "created_at": row[3],
-        "updated_at": row[4],
-    }
 
 
 @app.get(
@@ -101,7 +45,7 @@ async def get_all_tasks(
     db = get_db()
 
     query = """
-        SELECT id, title, done, created_at, updated_at
+        SELECT id, title, done
         FROM tasks
     """
 
@@ -123,7 +67,14 @@ async def get_all_tasks(
 
     db.close()
 
-    return [task_from_row(row) for row in rows]
+    return [
+        {
+            "id": row[0],
+            "title": row[1],
+            "done": bool(row[2]),
+        }
+        for row in rows
+    ]
 
 
 @app.get(
@@ -136,7 +87,7 @@ async def get_task(id: int):
 
     row = db.execute(
         """
-        SELECT id, title, done, created_at, updated_at
+        SELECT id, title, done
         FROM tasks
         WHERE id = ?
         """,
@@ -151,7 +102,11 @@ async def get_task(id: int):
             detail=f"Task {id} not found"
         )
 
-    return task_from_row(row)
+    return {
+        "id": row[0],
+        "title": row[1],
+        "done": bool(row[2]),
+    }
 
 
 @app.post(
@@ -174,8 +129,8 @@ async def add_task(task: dict):
     cursor = db.execute(
         """
         INSERT INTO tasks
-        (title, done, created_at, updated_at)
-        VALUES (?, ?, datetime('now'), datetime('now'))
+        (title, done)
+        VALUES (?, ?)
         """,
         (title.strip(), False)
     )
@@ -186,7 +141,7 @@ async def add_task(task: dict):
 
     row = db.execute(
         """
-        SELECT id, title, done, created_at, updated_at
+        SELECT id, title, done
         FROM tasks
         WHERE id = ?
         """,
@@ -195,7 +150,11 @@ async def add_task(task: dict):
 
     db.close()
 
-    return task_from_row(row)
+    return {
+        "id": row[0],
+        "title": row[1],
+        "done": bool(row[2]),
+    }
 
 
 @app.put(
@@ -230,7 +189,7 @@ async def edit_task(id: int, task_edited: dict):
 
     existing_task = db.execute(
         """
-        SELECT id, title, done, created_at, updated_at
+        SELECT id, title, done
         FROM tasks
         WHERE id = ?
         """,
@@ -261,8 +220,7 @@ async def edit_task(id: int, task_edited: dict):
         """
         UPDATE tasks
         SET title = ?,
-            done = ?,
-            updated_at = datetime('now')
+            done = ?
         WHERE id = ?
         """,
         (title, done, id)
@@ -272,7 +230,7 @@ async def edit_task(id: int, task_edited: dict):
 
     updated_task = db.execute(
         """
-        SELECT id, title, done, created_at, updated_at
+        SELECT id, title, done
         FROM tasks
         WHERE id = ?
         """,
@@ -281,7 +239,11 @@ async def edit_task(id: int, task_edited: dict):
 
     db.close()
 
-    return task_from_row(updated_task)
+    return {
+        "id": updated_task[0],
+        "title": updated_task[1],
+        "done": bool(updated_task[2]),
+    }
 
 
 @app.delete(
@@ -355,8 +317,8 @@ async def reset_tasks():
     db.executemany(
         """
         INSERT INTO tasks
-        (title, done, created_at, updated_at)
-        VALUES (?, ?, datetime('now'), datetime('now'))
+        (title, done)
+        VALUES (?, ?)
         """,
         [
             ("Homework", False),
@@ -369,7 +331,7 @@ async def reset_tasks():
 
     rows = db.execute(
         """
-        SELECT id, title, done, created_at, updated_at
+        SELECT id, title, done
         FROM tasks
         """
     ).fetchall()
@@ -378,5 +340,12 @@ async def reset_tasks():
 
     return {
         "message": "Tasks have been reset.",
-        "tasks": [task_from_row(row) for row in rows],
+        "tasks": [
+            {
+                "id": row[0],
+                "title": row[1],
+                "done": bool(row[2]),
+            }
+            for row in rows
+        ],
     }
