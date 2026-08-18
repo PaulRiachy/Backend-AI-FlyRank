@@ -366,17 +366,17 @@ async def public_info():
     }
 
 @app.get("/protected/profile")
-async def protected_profile(authorization: Optional[str] = Header(None)):
+def profile(authorization: str | None = Header(default=None)):
     if not authorization:
         raise HTTPException(
             status_code=401,
-            detail="Access token required"
+            detail="Access token required",
         )
 
     if not authorization.startswith("Bearer "):
         raise HTTPException(
             status_code=401,
-            detail="Access token required"
+            detail="Access token required",
         )
 
     token = authorization[7:]
@@ -384,9 +384,27 @@ async def protected_profile(authorization: Optional[str] = Header(None)):
     if not token:
         raise HTTPException(
             status_code=401,
-            detail="Access token required"
+            detail="Access token required",
+        )
+
+    try:
+        response = supabase.auth.get_user(token)
+    except Exception:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid or expired token",
+        )
+
+    user = response.user
+
+    if not user:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid or expired token",
         )
 
     return {
-        "message": "You provided an access token."
+        "id": user.id,
+        "email": user.email,
+        "created_at": user.created_at,
     }
