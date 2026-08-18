@@ -1,7 +1,9 @@
 from fastapi import FastAPI, HTTPException, status
 from typing import Optional
+from pydantic import BaseModel
 
 from database import get_db, initialize_database, seed_database
+from supabase_client import supabase
 
 
 app = FastAPI()
@@ -9,6 +11,9 @@ app = FastAPI()
 initialize_database()
 seed_database()
 
+class AuthRequest(BaseModel):
+    email: Optional[str] = None
+    password: Optional[str] = None
 
 def task_from_row(row):
     return {
@@ -309,4 +314,44 @@ async def reset_tasks():
     return {
         "message": "Tasks have been reset.",
         "tasks": [task_from_row(row) for row in rows],
+    }
+
+@app.post("/auth/signup", status_code=201)
+def signup(data: AuthRequest):
+    if not data.email or not data.password:
+        raise HTTPException(
+            status_code=400,
+            detail="Email and password are required",
+        )
+
+    response = supabase.auth.sign_up({
+        "email": data.email,
+        "password": data.password,
+    })
+
+    return response.user
+
+
+@app.post("/auth/login")
+def login(data: AuthRequest):
+    if not data.email or not data.password:
+        raise HTTPException(
+            status_code=400,
+            detail="Email and password are required",
+        )
+
+    try:
+        response = supabase.auth.sign_in_with_password({
+            "email": data.email,
+            "password": data.password,
+        })
+    except Exception:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid login credentials",
+        )
+
+    return {
+        "access_token": response.session.access_token,
+        "refresh_token": response.session.refresh_token,
     }
