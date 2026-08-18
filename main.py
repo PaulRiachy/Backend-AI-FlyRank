@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, HTTPException, status, Header
 from typing import Optional
 from pydantic import BaseModel
 
@@ -316,6 +316,8 @@ async def reset_tasks():
         "tasks": [task_from_row(row) for row in rows],
     }
 
+#Supabase
+
 @app.post("/auth/signup", status_code=201)
 def signup(data: AuthRequest):
     if not data.email or not data.password:
@@ -354,4 +356,37 @@ def login(data: AuthRequest):
     return {
         "access_token": response.session.access_token,
         "refresh_token": response.session.refresh_token,
+    }
+
+
+@app.get("/public/info")
+async def public_info():
+    return {
+        "message": "Welcome stranger! This info is public."
+    }
+
+@app.get("/protected/profile")
+async def protected_profile(authorization: Optional[str] = Header(None)):
+    if not authorization:
+        raise HTTPException(
+            status_code=401,
+            detail="Access token required"
+        )
+
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(
+            status_code=401,
+            detail="Access token required"
+        )
+
+    token = authorization[7:]
+
+    if not token:
+        raise HTTPException(
+            status_code=401,
+            detail="Access token required"
+        )
+
+    return {
+        "message": "You provided an access token."
     }
