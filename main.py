@@ -1,9 +1,10 @@
-from fastapi import FastAPI, HTTPException, status, Header
+from fastapi import FastAPI, HTTPException, status, Depends
 from typing import Optional
 from pydantic import BaseModel
 
 from database import get_db, initialize_database, seed_database
 from supabase_client import supabase
+from auth import get_current_user
 
 
 app = FastAPI()
@@ -365,46 +366,26 @@ async def public_info():
         "message": "Welcome stranger! This info is public."
     }
 
+
 @app.get("/protected/profile")
-def profile(authorization: str | None = Header(default=None)):
-    if not authorization:
-        raise HTTPException(
-            status_code=401,
-            detail="Access token required",
-        )
-
-    if not authorization.startswith("Bearer "):
-        raise HTTPException(
-            status_code=401,
-            detail="Access token required",
-        )
-
-    token = authorization[7:]
-
-    if not token:
-        raise HTTPException(
-            status_code=401,
-            detail="Access token required",
-        )
-
-    try:
-        response = supabase.auth.get_user(token)
-    except Exception:
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid or expired token",
-        )
-
-    user = response.user
-
-    if not user:
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid or expired token",
-        )
-
+def profile(user=Depends(get_current_user)):
     return {
         "id": user.id,
         "email": user.email,
         "created_at": user.created_at,
     }
+
+
+@app.get("/protected/dashboard")
+def dashboard(user=Depends(get_current_user)):
+    return {
+        "message": "Welcome to your dashboard",
+        "user_id": user.id,
+    }
+
+
+@app.post("/auth/logout", status_code=status.HTTP_204_NO_CONTENT)
+def logout(user=Depends(get_current_user)):
+    supabase.auth.sign_out()
+
+    return
