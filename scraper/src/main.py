@@ -26,6 +26,14 @@ USER_AGENT = (
 TIMEOUT = 10
 REQUEST_DELAY = 0.5
 
+def create_stats():
+    return {
+        "pages_fetched": 0,
+        "cache_hits": 0,
+        "valid_records": 0,
+        "invalid_records": 0,
+        "failed_pages": 0,
+    }
 
 class BookRecord(BaseModel):
     title: str
@@ -39,9 +47,15 @@ class BookRecord(BaseModel):
     fetched_at: datetime
 
 
-def fetch_page(url: str, cache_file: Path):
+def fetch_page(
+    url: str,
+    cache_file: Path,
+    stats: dict,
+):
     if cache_file.exists():
         content = cache_file.read_text(encoding="utf-8")
+
+        stats["cache_hits"] += 1
 
         print(
             f"CACHE HIT url={url} "
@@ -52,29 +66,73 @@ def fetch_page(url: str, cache_file: Path):
 
     print(f"FETCH url={url}")
 
-    response = requests.get(
-        url,
-        headers={"User-Agent": USER_AGENT},
-        timeout=TIMEOUT,
-    )
+    for attempt in range(2):
+        try:
+            response = requests.get(
+                url,
+                headers={"User-Agent": USER_AGENT},
+                timeout=TIMEOUT,
+            )
 
-    if response.status_code != 200:
+        except requests.RequestException as error:
+            if attempt == 0:
+                print(
+                    f"RETRY url={url} "
+                    f"reason={type(error).__name__}"
+                )
+                sleep(REQUEST_DELAY)
+                continue
+
+            raise RuntimeError(
+                f"Request failed for {url}: {error}"
+            ) from error
+
+        if response.status_code == 200:
+            content = response.text
+
+            cache_file.parent.mkdir(
+                parents=True,
+                exist_ok=True,
+            )
+
+            cache_file.write_text(
+                content,
+                encoding="utf-8",
+            )
+
+            stats["pages_fetched"] += 1
+
+            print(
+                f"FETCHED url={url} "
+                f"status=200 "
+                f"size={len(response.content)} bytes"
+            )
+
+            return content
+
+        if response.status_code in (403, 404):
+            raise RuntimeError(
+                f"Failed to fetch {url}: "
+                f"HTTP {response.status_code}"
+            )
+
+        if 500 <= response.status_code <= 599:
+            if attempt == 0:
+                print(
+                    f"RETRY url={url} "
+                    f"status={response.status_code}"
+                )
+                sleep(REQUEST_DELAY)
+                continue
+
         raise RuntimeError(
-            f"Failed to fetch {url}: HTTP {response.status_code}"
+            f"Failed to fetch {url}: "
+            f"HTTP {response.status_code}"
         )
 
-    content = response.text
-
-    cache_file.parent.mkdir(parents=True, exist_ok=True)
-    cache_file.write_text(content, encoding="utf-8")
-
-    print(
-        f"FETCHED url={url} "
-        f"status=200 "
-        f"size={len(response.content)} bytes"
+    raise RuntimeError(
+        f"Failed to fetch {url}"
     )
-
-    return content
 
 
 def get_catalogue_page_cache_file(page_number: int) -> Path:
@@ -130,7 +188,7 @@ def find_next_page(
     return urljoin(page_url, href)
 
 
-def discover_catalogue():
+def discover_catalogue(stats):
     current_url = CATALOGUE_PAGE_URL
 
     discovered_books = []
@@ -146,6 +204,7 @@ def discover_catalogue():
         html = fetch_page(
             current_url,
             cache_file,
+            stats,
         )
 
         book_urls = discover_books_from_page(
@@ -181,7 +240,6 @@ def discover_catalogue():
     print(f"unique_urls={len(unique_books)}")
 
     return unique_books
-
 
 def extract_text(element):
     if element is None:
@@ -271,7 +329,10 @@ def extract_book_record(
     }
 
 
-def fetch_book_pages(books: list[dict]):
+def fetch_book_pages(
+    books: list[dict],
+    stats: dict,
+):
     records = []
 
     for index, book in enumerate(
@@ -283,28 +344,37 @@ def fetch_book_pages(books: list[dict]):
 
         cache_file = get_book_cache_file(index)
 
-        if not cache_file.exists():
-            sleep(REQUEST_DELAY)
+        try:
+            if not cache_file.exists():
+                sleep(REQUEST_DELAY)
 
-        html = fetch_page(
-            product_url,
-            cache_file,
-        )
+            html = fetch_page(
+                product_url,
+                cache_file,
+                stats,
+            )
 
-        record = extract_book_record(
-            html=html,
-            product_url=product_url,
-            source_page=source_page,
-        )
+            record = extract_book_record(
+                html=html,
+                product_url=product_url,
+                source_page=source_page,
+            )
 
-        records.append(record)
+            records.append(record)
 
-        print(
-            f"extracted={index}/{len(books)}"
-        )
+            print(
+                f"extracted={index}/{len(books)}"
+            )
+
+        except Exception as error:
+            stats["failed_pages"] += 1
+
+            print(
+                f"FAILED url={product_url} "
+                f"reason={error}"
+            )
 
     return records
-
 
 def normalize_price(price_text: str) -> float:
     cleaned = (
@@ -330,7 +400,7 @@ def normalize_record(raw_record: dict) -> dict:
     }
 
 
-def validate_and_store(records: list[dict]):
+def validate_and_store(records: list[dict],stats: dict,):
     valid_records = []
     errors = []
 
@@ -395,6 +465,9 @@ def validate_and_store(records: list[dict]):
         encoding="utf-8",
     )
 
+    stats["valid_records"] = len(valid_records)
+    stats["invalid_records"] = len(errors)
+
     print(
         f"valid_records={len(valid_records)}"
     )
@@ -405,12 +478,62 @@ def validate_and_store(records: list[dict]):
 
     return valid_records, errors
 
+def write_run_report(
+    stats: dict,
+    started_at: datetime,
+):
+    finished_at = datetime.now(timezone.utc)
+
+    duration = (
+        finished_at - started_at
+    ).total_seconds()
+
+    report = {
+        "started_at": started_at.isoformat(),
+        "finished_at": finished_at.isoformat(),
+        "duration_seconds": duration,
+        "pages_fetched": stats["pages_fetched"],
+        "cache_hits": stats["cache_hits"],
+        "valid_records": stats["valid_records"],
+        "invalid_records": stats["invalid_records"],
+        "failed_pages": stats["failed_pages"],
+    }
+
+    OUTPUT_DIR.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    report_file = OUTPUT_DIR / "run-report.json"
+
+    report_file.write_text(
+        json.dumps(
+            report,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    print("\nRun report:")
+    print(
+        json.dumps(
+            report,
+            indent=2,
+        )
+    )
 
 def main():
-    book_urls = discover_catalogue()
+    started_at = datetime.now(timezone.utc)
+
+    stats = create_stats()
+
+    book_urls = discover_catalogue(
+        stats
+    )
 
     records = fetch_book_pages(
-        book_urls
+        book_urls,
+        stats,
     )
 
     print(
@@ -422,7 +545,8 @@ def main():
         print(records[0])
 
     valid_records, errors = validate_and_store(
-        records
+        records,
+        stats,
     )
 
     print(
@@ -435,6 +559,9 @@ def main():
         f"invalid records."
     )
 
-
+    write_run_report(
+        stats,
+        started_at,
+    )
 if __name__ == "__main__":
     main()
