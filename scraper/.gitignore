@@ -5,7 +5,9 @@ __pycache__/
 venv/
 
 cache/
-output/
+output/*
+!output/books.json
+!output/run-report.json
 
 .env
 .env.local
