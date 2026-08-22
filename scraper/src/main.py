@@ -1,4 +1,6 @@
+from datetime import datetime, timezone
 from pathlib import Path
+from time import sleep
 from urllib.parse import urljoin
 
 import requests
@@ -11,6 +13,7 @@ CATALOGUE_PAGE_URL = "https://books.toscrape.com/catalogue/page-1.html"
 CACHE_DIR = Path(__file__).resolve().parent.parent / "cache"
 
 USER_AGENT = "FlyRankInternshipA9/1.0 (+https://github.com/PaulRiachy/Backend-AI-FlyRank)"
+
 TIMEOUT = 10
 REQUEST_DELAY = 0.5
 
@@ -57,6 +60,10 @@ def get_catalogue_page_cache_file(page_number: int) -> Path:
     return CACHE_DIR / f"catalogue-page-{page_number}.html"
 
 
+def get_book_cache_file(book_number: int) -> Path:
+    return CACHE_DIR / f"book-{book_number}.html"
+
+
 def discover_books_from_page(html: str, page_url: str) -> list[str]:
     soup = BeautifulSoup(html, "html.parser")
 
@@ -99,7 +106,7 @@ def find_next_page(html: str, page_url: str) -> str | None:
 def discover_catalogue():
     current_url = CATALOGUE_PAGE_URL
 
-    all_book_urls = []
+    discovered_books = []
     catalogue_pages = 0
 
     while current_url and catalogue_pages < 3:
@@ -117,24 +124,132 @@ def discover_catalogue():
             current_url,
         )
 
-        all_book_urls.extend(book_urls)
+        for book_url in book_urls:
+            discovered_books.append(
+                {
+                    "product_url": book_url,
+                    "source_page": current_url,
+                }
+            )
 
         current_url = find_next_page(
             html,
             current_url,
         )
 
-    unique_book_urls = list(dict.fromkeys(all_book_urls))
+    unique_books = []
+    seen_urls = set()
+
+    for book in discovered_books:
+        if book["product_url"] in seen_urls:
+            continue
+
+        seen_urls.add(book["product_url"])
+        unique_books.append(book)
 
     print(f"catalogue_pages={catalogue_pages}")
-    print(f"discovered={len(all_book_urls)}")
-    print(f"unique_urls={len(unique_book_urls)}")
+    print(f"discovered={len(discovered_books)}")
+    print(f"unique_urls={len(unique_books)}")
 
-    return unique_book_urls
+    return unique_books
+
+def extract_text(element):
+    if element is None:
+        return None
+
+    text = element.get_text(" ", strip=True)
+
+    return text if text else None
+
+
+def extract_book_record(
+    html: str,
+    product_url: str,
+    source_page: str,
+):
+    soup = BeautifulSoup(html, "html.parser")
+
+    product_main = soup.select_one("article.product_page")
+
+    if product_main is None:
+        raise ValueError("Product page content not found")
+
+    title_element = product_main.select_one("div.product_main h1")
+    price_element = product_main.select_one("p.price_color")
+    availability_element = product_main.select_one("p.instock.availability")
+    rating_element = product_main.select_one("p.star-rating")
+
+    description_element = soup.select_one(
+        "#product_description + p"
+    )
+
+    title = extract_text(title_element)
+    price_text = extract_text(price_element)
+    availability_text = extract_text(availability_element)
+    description = extract_text(description_element)
+
+    rating_text = None
+
+    if rating_element is not None:
+        rating_classes = rating_element.get("class", [])
+
+        for class_name in rating_classes:
+            if class_name != "star-rating":
+                rating_text = class_name
+                break
+
+    return {
+        "title": title,
+        "product_url": product_url,
+        "price_text": price_text,
+        "availability_text": availability_text,
+        "rating_text": rating_text,
+        "description": description,
+        "source_page": source_page,
+        "fetched_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def fetch_book_pages(books: list[dict]):
+    records = []
+
+    for index, book in enumerate(books, start=1):
+        product_url = book["product_url"]
+        source_page = book["source_page"]
+
+        cache_file = get_book_cache_file(index)
+
+        if not cache_file.exists():
+            sleep(REQUEST_DELAY)
+
+        html = fetch_page(
+            product_url,
+            cache_file,
+        )
+
+        record = extract_book_record(
+            html=html,
+            product_url=product_url,
+            source_page=source_page,
+        )
+
+        records.append(record)
+
+        print(f"extracted={index}/{len(books)}")
+
+    return records
 
 
 def main():
-    discover_catalogue()
+    book_urls = discover_catalogue()
+
+    records = fetch_book_pages(book_urls)
+
+    print(f"detail_pages={len(records)}")
+
+    if records:
+        print("\nFirst raw record:")
+        print(records[0])
 
 
 if __name__ == "__main__":
